@@ -244,3 +244,185 @@ def test_tasks_not_yet_due_are_left_out_of_the_plan() -> None:
     assert Scheduler().create_plan(owner, plan_date=TODAY).entries == []
     later = Scheduler().create_plan(owner, plan_date=TODAY + timedelta(days=7))
     assert [e.task for e in later.entries] == [next_bath]
+
+
+# --- Happy paths -------------------------------------------------------------
+
+
+def test_flexible_tasks_run_back_to_back_in_priority_order() -> None:
+    pet = Pet(name="Mochi", species="dog")
+    play = Task(description="Play", duration_minutes=15, priority="low")
+    walk = Task(description="Walk", duration_minutes=20, priority="medium")
+    meds = Task(description="Meds", duration_minutes=5, priority="high")
+    for task in (play, walk, meds):
+        pet.add_task(task)
+
+    plan = Scheduler().create_plan(make_owner(60, pet), plan_date=TODAY)
+    ordered = plan.sorted_entries()
+
+    assert [e.task for e in ordered] == [meds, walk, play]
+    assert [e.start_time for e in ordered] == [time(8, 0), time(8, 5), time(8, 25)]
+    assert plan.skipped == [] and plan.conflicts == []
+    assert plan.remaining_time() == 20
+
+
+def test_flexible_tasks_fill_gaps_around_fixed_tasks_across_pets() -> None:
+    dog = Pet(name="Mochi", species="dog")
+    cat = Pet(name="Luna", species="cat")
+    meds = Task(description="Meds", duration_minutes=20, fixed_time=time(8, 10))
+    feed = Task(description="Feed", duration_minutes=10)
+    brush = Task(description="Brush", duration_minutes=15)
+    dog.add_task(meds)
+    dog.add_task(feed)
+    cat.add_task(brush)
+
+    plan = Scheduler().create_plan(make_owner(60, dog, cat), plan_date=TODAY)
+    starts = {e.task.description: e.start_time for e in plan.entries}
+
+    assert starts == {"Meds": time(8, 10), "Feed": time(8, 0), "Brush": time(8, 30)}
+    assert [e.pet for e in plan.sorted_entries()] == [dog, dog, cat]
+
+
+def test_high_priority_task_wins_tight_budget_even_if_added_last() -> None:
+    pet = Pet(name="Mochi", species="dog")
+    play = Task(description="Play", duration_minutes=20, priority="low")
+    meds = Task(description="Meds", duration_minutes=20, priority="high")
+    pet.add_task(play)
+    pet.add_task(meds)
+
+    plan = Scheduler().create_plan(make_owner(20, pet), plan_date=TODAY)
+
+    assert [e.task for e in plan.entries] == [meds]
+    assert [s.task for s in plan.skipped] == [play]
+
+
+# --- Edge cases --------------------------------------------------------------
+
+
+def test_pet_with_no_tasks_gives_empty_plan() -> None:
+    owner = make_owner(60, Pet(name="Mochi", species="dog"))
+
+    plan = Scheduler().create_plan(owner, plan_date=TODAY)
+
+    assert plan.entries == [] and plan.skipped == [] and plan.conflicts == []
+    assert owner.get_all_tasks() == []
+    assert plan.summarize().startswith("No incomplete tasks")
+
+
+def test_owner_with_no_pets_gives_empty_plan() -> None:
+    plan = Scheduler().create_plan(make_owner(60), plan_date=TODAY)
+
+    assert plan.entries == [] and plan.remaining_time() == 60
+
+
+def test_two_pets_at_exact_same_time_higher_priority_keeps_slot() -> None:
+    dog = Pet(name="Mochi", species="dog")
+    cat = Pet(name="Luna", species="cat")
+    walk = Task("Walk", 20, priority="low", fixed_time=time(9, 0))
+    feed = Task("Feed", 10, priority="high", fixed_time=time(9, 0))
+    dog.add_task(walk)
+    cat.add_task(feed)
+
+    plan = Scheduler().create_plan(make_owner(120, dog, cat), plan_date=TODAY)
+
+    assert [e.task for e in plan.entries] == [feed]
+    assert [s.task for s in plan.skipped] == [walk]
+    assert plan.skipped[0].reason == "conflicts with Feed"
+    assert len(plan.conflicts) == 1
+    assert plan.conflicts[0].endswith("[different pets]")
+
+
+def test_same_pet_same_time_same_priority_first_added_wins() -> None:
+    pet = Pet(name="Mochi", species="dog")
+    pill = Task("Pill", 5, fixed_time=time(9, 0))
+    brush = Task("Brush", 5, fixed_time=time(9, 0))
+    pet.add_task(pill)
+    pet.add_task(brush)
+
+    plan = Scheduler().create_plan(make_owner(60, pet), plan_date=TODAY)
+
+    assert [e.task for e in plan.entries] == [pill]
+    assert [s.task for s in plan.skipped] == [brush]
+    assert plan.conflicts[0].endswith("[same pet]")
+
+
+def test_zero_budget_skips_every_task() -> None:
+    pet = Pet(name="Mochi", species="dog")
+    pet.add_task(Task("Walk", 20))
+    pet.add_task(Task("Meds", 5, fixed_time=time(9, 0)))
+
+    plan = Scheduler().create_plan(make_owner(0, pet), plan_date=TODAY)
+
+    assert plan.entries == []
+    assert len(plan.skipped) == 2
+    assert all("only 0 min left" in s.reason for s in plan.skipped)
+
+
+def test_task_exactly_filling_budget_is_scheduled() -> None:
+    pet = Pet(name="Mochi", species="dog")
+    walk = Task("Walk", 30)
+    pet.add_task(walk)
+
+    plan = Scheduler().create_plan(make_owner(30, pet), plan_date=TODAY)
+
+    assert [e.task for e in plan.entries] == [walk]
+    assert plan.remaining_time() == 0
+
+
+def test_task_ending_one_minute_before_midnight_is_scheduled() -> None:
+    pet = Pet(name="Mochi", species="dog")
+    pet.add_task(Task("Late meds", 9, fixed_time=time(23, 50)))
+
+    plan = Scheduler().create_plan(make_owner(30, pet), plan_date=TODAY)
+
+    assert plan.entries[0].end_time == time(23, 59)
+
+
+@pytest.mark.parametrize(
+    "completed_on, expected",
+    [
+        (date(2026, 12, 31), date(2027, 1, 1)),
+        (date(2028, 2, 28), date(2028, 2, 29)),
+        (date(2027, 2, 28), date(2027, 3, 1)),
+    ],
+)
+def test_daily_recurrence_rolls_over_year_end_and_leap_day(
+    completed_on: date, expected: date
+) -> None:
+    task = Task("Feed", 5, frequency="daily")
+
+    assert task.next_occurrence(completed_on).due_date == expected
+
+
+def test_overdue_task_stays_in_plan_until_done() -> None:
+    pet = Pet(name="Mochi", species="dog")
+    bath = Task("Bath", 20, due_date=TODAY - timedelta(days=3))
+    pet.add_task(bath)
+
+    plan = Scheduler().create_plan(make_owner(60, pet), plan_date=TODAY)
+
+    assert [e.task for e in plan.entries] == [bath]
+
+
+def test_completing_overdue_task_schedules_from_completion_date() -> None:
+    pet = Pet(name="Mochi", species="dog")
+    feed = Task("Feed", 5, frequency="daily", due_date=TODAY - timedelta(days=3))
+    pet.add_task(feed)
+
+    next_feed = pet.complete_task(feed, TODAY)
+
+    assert next_feed.due_date == TODAY + timedelta(days=1)
+
+
+def test_sorted_entries_are_chronological_even_when_stored_out_of_order() -> None:
+    pet = Pet(name="Mochi", species="dog")
+    dinner = Task("Dinner", 10, fixed_time=time(18, 0))
+    walk = Task("Walk", 20)
+    pet.add_task(dinner)
+    pet.add_task(walk)
+
+    plan = Scheduler().create_plan(make_owner(60, pet), plan_date=TODAY)
+
+    assert [e.task for e in plan.entries] == [dinner, walk]  # insertion order
+    starts = [e.start_time for e in plan.sorted_entries()]
+    assert starts == sorted(starts) == [time(8, 0), time(18, 0)]

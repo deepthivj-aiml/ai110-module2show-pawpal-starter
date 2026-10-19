@@ -66,17 +66,46 @@ Scheduled 65 of 90 available minutes (25 minutes remaining).
 
 ```bash
 # Run the full test suite:
-pytest
+python -m pytest
 
-# Run with coverage:
-pytest --cov
+# Show each test by name:
+python -m pytest -v
 ```
 
-Sample test output:
+### What the tests cover
+
+The 35 tests in `tests/test_pawpal.py` cover both happy paths (everything works) and edge cases:
+
+- **Sorting:** `sort_by_time()` orders tasks by duration, keeps ties in insertion order, supports `reverse=True` and handles an empty list. `sorted_entries()` returns the plan in clock order even when set-time tasks were stored first.
+- **Priority scheduling:** high-priority tasks are placed first and win a tight time budget. Flexible tasks fill the gaps around set-time tasks, across multiple pets.
+- **Recurring tasks:** completing a daily task creates a new one due the next day; weekly tasks repeat after 7 days; one-time tasks don't repeat. Due dates roll over month ends, year ends and leap days. An overdue task stays in the plan until it's done, and its next copy is due one interval after the day it was completed.
+- **Conflict detection:** two tasks at the exact same time are flagged, tagged `[same pet]` or `[different pets]`. The higher-priority task keeps the slot (or the first one added, if priorities match). Back-to-back, completed and flexible tasks are not flagged.
+- **Edge cases:** a pet with no tasks, an owner with no pets, a zero time budget, a task that exactly fills the budget, and tasks ending at 23:59 (scheduled) or at midnight (skipped).
+- **Filtering and validation:** filtering by pet and completion status, and rejecting invalid priorities.
+
+### Test results
 
 ```
-# Paste your pytest output here
+$ python -m pytest
+============================= test session starts =============================
+platform win32 -- Python 3.12.10, pytest-9.1.1, pluggy-1.6.0
+collected 35 items
+
+tests\test_pawpal.py ...................................                 [100%]
+
+============================= 35 passed in 0.23s ==============================
 ```
+
+(The run also printed one `PytestConfigWarning` about `asyncio_mode`. It comes from a `pyproject.toml` outside this project and doesn't affect the tests, so it's left out above.)
+
+### Confidence level: ★★★★☆ (4/5)
+
+All 35 tests pass, including the three core behaviors (chronological sorting, daily recurrence and conflict detection) and the main edge cases. It isn't 5 stars because a few behaviors are known but not yet decided or tested:
+
+- Completing the same task twice raises an error after the task is already marked complete.
+- Two tasks with identical details can't be added to the same pet (for example, two "Feed" tasks with no set time).
+- A frequency such as `"monthly"` counts as recurring but never creates a next task.
+- Conflict detection doesn't catch overlaps that cross midnight.
 
 ## 📐 Smarter Scheduling
 
