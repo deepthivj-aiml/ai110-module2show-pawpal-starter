@@ -1,0 +1,122 @@
+classDiagram
+    class Task {
+        +str description
+        +int duration_minutes
+        +str frequency
+        +bool completed
+        +str priority
+        +str category
+        +date due_date
+        +time fixed_time
+        +time() int
+        +is_recurring() bool
+        +is_essential() bool
+        +is_due(on) bool
+        +next_occurrence(completed_on) Task
+        +mark_complete()
+        +mark_completed()
+        +mark_incomplete()
+        +describe() str
+    }
+
+    class Pet {
+        +str name
+        +str species
+        +int age
+        +str care_notes
+        +Task[] tasks
+        +add_task(task)
+        +remove_task(task)
+        +complete_task(task, on) Task
+        +list_tasks() Task[]
+    }
+
+    class Owner {
+        +str name
+        +str[] preferences
+        +int available_minutes
+        +Pet[] pets
+        +update_preferences(preferences)
+        +set_available_time(minutes)
+        +add_pet(pet)
+        +remove_pet(pet)
+        +list_pets() Pet[]
+        +get_pet_tasks() PetTaskPair[]
+        +get_all_tasks() Task[]
+        +filter_tasks(pet_name, completed) PetTaskPair[]
+    }
+
+    class Scheduler {
+        +time start_time
+        +create_plan(owner, plan_date) DailyPlan
+        +explain_choice(task) str
+        +detect_conflicts(owner, plan_date)$ str[]
+        +find_conflict_pairs(owner, plan_date)$ TimedTaskPair[]
+        +sort_by_time(tasks, reverse)$ Task[]
+        +filter_tasks(owner, pet_name, completed)$ Task[]
+        +mark_task_complete(owner, task, on)$ Task
+        -_due_tasks(owner, plan_date)$ PetTaskPair[]
+        -_find_open_slot(plan, duration, earliest) int
+        -_try_schedule(plan, pet, task, start)
+        -_find_conflicts(pairs)$ str[]
+        -_conflicting_pairs(pairs)$ TimedTaskPair[]
+    }
+
+    class DailyPlan {
+        +int available_minutes
+        +ScheduleEntry[] entries
+        +SkippedTask[] skipped
+        +str[] conflicts
+        +total_scheduled_minutes() int
+        +unused_minutes() int
+        +sorted_entries() ScheduleEntry[]
+        +find_overlap(entry) ScheduleEntry
+        +add_entry(entry)
+        +remaining_time() int
+        +summarize() str
+    }
+
+    class ScheduleEntry {
+        +Pet pet
+        +Task task
+        +time start_time
+        +time end_time
+        +str reason
+        +duration() int
+        +overlaps(other) bool
+        +format_for_display() str
+    }
+
+    class SkippedTask {
+        +Pet pet
+        +Task task
+        +str reason
+        +format_for_display() str
+    }
+
+    class TimedTask {
+        <<NamedTuple>>
+        +int start
+        +int end
+        +Pet pet
+        +Task task
+        +from_task(pet, task)$ TimedTask
+    }
+
+    Owner "1" --> "0..*" Pet : cares for
+    Pet "1" o-- "0..*" Task : has tasks, adds next occurrence on completion
+    Scheduler ..> Owner : reads time budget and due tasks
+    Scheduler ..> Pet : completes tasks through pet
+    Scheduler ..> Task : sorts, filters, explains
+    Scheduler ..> DailyPlan : creates
+    Scheduler ..> ScheduleEntry : creates
+    Scheduler ..> SkippedTask : creates
+    Scheduler ..> TimedTask : builds to check conflicts
+    DailyPlan "1" *-- "0..*" ScheduleEntry : scheduled
+    DailyPlan "1" *-- "0..*" SkippedTask : not scheduled
+    ScheduleEntry "0..*" --> "1" Pet : belongs to
+    ScheduleEntry "0..*" --> "1" Task : schedules
+    SkippedTask "0..*" --> "1" Pet : belongs to
+    SkippedTask "0..*" --> "1" Task : skips
+    TimedTask "0..*" --> "1" Pet : belongs to
+    TimedTask "0..*" --> "1" Task : spans

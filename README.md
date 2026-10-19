@@ -46,21 +46,22 @@ pip install -r requirements.txt
 
 The backend in `pawpal_system.py` models care activities with `Task`, pets and their task lists with `Pet`, and an owner's pets, preferences, and available time with `Owner`. `Owner.get_all_tasks()` gathers tasks across every registered pet, and `Scheduler` uses that method to include incomplete tasks from all pets in a shared daily plan. It prioritizes high-priority tasks, skips tasks that do not fit the remaining time, and records scheduled times and explanations in `ScheduleEntry` objects. `DailyPlan` keeps the entries and calculates its scheduled and remaining minutes from them. The Streamlit UI in `app.py` uses the owner and pet methods to add pets and tasks, then generates the multi-pet schedule. The terminal demo in `main.py` also exercises the models and scheduler.
 
-## 🖥️ Sample Output
+## ✨ Features
 
-Paste a sample of your app's CLI or Streamlit output here so a reader can see what a generated plan looks like:
+Every feature below is implemented in `pawpal_system.py`, used by the Streamlit app (`app.py`) and the terminal demo (`main.py`), and covered by `tests/test_pawpal.py`.
 
-```
-(.venv) PS C:\Projects\Codepath\ai110-module2show-pawpal-starter>  python main.py
-Today's Schedule
-Daily PawPal+ plan:
-- 08:00-08:30 - Mochi: Morning walk (30 min; scheduled first because it is high priority)
-- 08:30-08:40 - Mochi: Breakfast (10 min; scheduled first because it is high priority)
-- 08:40-09:00 - Luna: Play and enrichment (20 min; scheduled because it fits the remaining time (medium priority))
-- 09:00-09:05 - Luna: Refresh water (5 min; scheduled because it fits the remaining time (medium priority))
-Scheduled 65 of 90 available minutes (25 minutes remaining).
-(.venv) PS C:\Projects\Codepath\ai110-module2show-pawpal-starter>
-```
+- **Multi-pet daily planning within a time budget.** `Scheduler.create_plan()` gathers every due, incomplete task across all of the owner's pets and fits them into the owner's available minutes. A task that doesn't fit is skipped with a reason, and planning continues, so a shorter task can still use the leftover time.
+- **Priority-first scheduling.** Tasks are stable-sorted high → medium → low before placement, so important care claims the time budget first. Tasks with equal priority keep the order they were added.
+- **Set-time tasks and gap filling.** Tasks with a `fixed_time` (medication, a vet call) are pinned to that time. Flexible tasks are then placed in the earliest free gap that's long enough, starting from the day's start time (`_find_open_slot`). No two entries ever overlap, and nothing is allowed to run past midnight.
+- **Sorting by time.** `Scheduler.sort_by_time()` orders tasks by duration, shortest or longest first. The sort is stable and doesn't modify the input. `DailyPlan.sorted_entries()` shows the finished schedule in clock order.
+- **Filtering.** `Scheduler.filter_tasks()` / `Owner.filter_tasks()` narrow tasks by pet, by completion status, or both. The results can be passed straight into `sort_by_time()`.
+- **Conflict warnings.** `Scheduler.detect_conflicts()` compares every pair of set-time tasks and flags any whose time spans overlap: partial overlaps, one task inside another, and identical start times. Back-to-back tasks don't count. Each warning names both pets, both tasks and their times, tagged `[same pet]` or `[different pets]`. In the plan, the higher-priority task keeps the slot. The app explains which task was kept and suggests a time to move the other one to (`Scheduler.find_conflict_pairs()`).
+- **Daily and weekly recurrence.** Completing a task with `Pet.complete_task()` or `Scheduler.mark_task_complete()` keeps it as history and adds a fresh copy due 1 day (daily) or 7 days (weekly) later, using `timedelta`, so month ends, year ends and leap days roll over correctly. One-time tasks don't repeat.
+- **Due-date carry-over.** `Task.is_due()` keeps future occurrences out of today's plan, while a missed task stays in the plan until it's done.
+- **Explained decisions.** Every scheduled entry carries a plain-language reason (for example, "set for 09:00 (high priority)" or "scheduled first because it is high priority"), and every skipped task says why it was left out.
+- **Input validation.** Empty names, non-positive durations, unknown priorities and negative time budgets are rejected with clear errors.
+
+The final class design is in [`diagrams/uml_final.mmd`](diagrams/uml_final.mmd) (rendered: [`diagrams/uml_final.png`](diagrams/uml_final.png)).
 
 ## 🧪 Testing PawPal+
 
@@ -74,7 +75,7 @@ python -m pytest -v
 
 ### What the tests cover
 
-The 35 tests in `tests/test_pawpal.py` cover both happy paths (everything works) and edge cases:
+The 36 tests in `tests/test_pawpal.py` cover both happy paths (everything works) and edge cases:
 
 - **Sorting:** `sort_by_time()` orders tasks by duration, keeps ties in insertion order, supports `reverse=True` and handles an empty list. `sorted_entries()` returns the plan in clock order even when set-time tasks were stored first.
 - **Priority scheduling:** high-priority tasks are placed first and win a tight time budget. Flexible tasks fill the gaps around set-time tasks, across multiple pets.
@@ -89,18 +90,18 @@ The 35 tests in `tests/test_pawpal.py` cover both happy paths (everything works)
 $ python -m pytest
 ============================= test session starts =============================
 platform win32 -- Python 3.12.10, pytest-9.1.1, pluggy-1.6.0
-collected 35 items
+collected 36 items
 
-tests\test_pawpal.py ...................................                 [100%]
+tests\test_pawpal.py ....................................                [100%]
 
-============================= 35 passed in 0.23s ==============================
+============================= 36 passed in 0.07s ==============================
 ```
 
 (The run also printed one `PytestConfigWarning` about `asyncio_mode`. It comes from a `pyproject.toml` outside this project and doesn't affect the tests, so it's left out above.)
 
 ### Confidence level: ★★★★☆ (4/5)
 
-All 35 tests pass, including the three core behaviors (chronological sorting, daily recurrence and conflict detection) and the main edge cases. It isn't 5 stars because a few behaviors are known but not yet decided or tested:
+All 36 tests pass, including the three core behaviors (chronological sorting, daily recurrence and conflict detection) and the main edge cases. It isn't 5 stars because a few behaviors are known but not yet decided or tested:
 
 - Completing the same task twice raises an error after the task is already marked complete.
 - Two tasks with identical details can't be added to the same pet (for example, two "Feed" tasks with no set time).
@@ -162,12 +163,113 @@ All scheduling logic lives in `pawpal_system.py`. Each feature is covered by tes
 
 ## 📸 Demo Walkthrough
 
-Describe your app in numbered steps so a reader can follow along without watching a video:
+### Main UI features
 
-1. <!-- Describe this step -->
-2. <!-- Describe this step -->
-3. <!-- Describe this step -->
-4. <!-- Describe this step -->
-5. <!-- Add more steps as needed -->
+Run the app with `streamlit run app.py`. The page is one column, top to bottom:
 
-**Screenshot or video** *(optional)*: <!-- Insert a screenshot or link to a demo video here -->
+| Section | What you can do |
+|---|---|
+| **Owner and available time** | Set your name, how many minutes of care time you have today, and when your day starts. |
+| **Add a pet** | Add a pet with a name and species (dog, cat or other). Duplicates and blank names are rejected with an error. |
+| **Add a care task** | Choose a pet, then enter a description, duration, priority (low, medium, high) and frequency (daily, weekly, once). Tick **Must happen at a set time** to pin the task to a clock time. |
+| **Current tasks** | View every task in a table, then filter by pet and status, or sort by duration (shortest or longest first). If any set-time tasks clash, a warning appears here straight away. Mark a task complete from the dropdown, and a repeating task shows when its next copy is due. |
+| **Today's schedule** | Click **Generate schedule** to see the tasks scheduled and minutes used and free, then the plan in clock order with a reason for each task, a warning for each conflict, and a "Not scheduled" table explaining anything left out. If everything fits, a green success message says so. |
+
+### Example workflow
+
+1. **Set the day.** Leave the owner as *Jordan*, set available time to **90** minutes and start the day at **08:00**.
+2. **Add two pets.** Add *Mochi* (dog), then *Luna* (cat). Each appears under "Your pets" with a success message.
+3. **Add flexible tasks.** For Mochi: *Morning walk*, 30 min, high. For Luna: *Play and enrichment*, 20 min, medium.
+4. **Add two set-time tasks that clash.** For Mochi: *Give medication*, 5 min, high, set time **09:00**. For Luna: *Vet video call*, 15 min, medium, set time **09:00**. A warning appears under Current tasks right away: *"1 set-time conflict – Mochi's Give medication (09:00–09:05) overlaps Luna's Vet video call (09:00–09:15)."*
+5. **Sort and filter.** Set "Sort by duration" to *Longest first*, and the walk moves to the top. Set "Show pet" to *Luna* to see only her tasks.
+6. **Generate today's schedule.** Click **Generate schedule**. Flexible tasks are placed in priority order: the walk runs 08:00–08:30 and play 08:30–08:50. The medication runs at 09:00 as set. A warning explains: *"You can't be with two pets at once … PawPal+ kept Give medication because it's high priority, and left out Vet video call. 💡 To fit both, move Vet video call to 09:05 or later."* The vet call is listed under "Not scheduled" with the reason *conflicts with Give medication*.
+7. **Complete a task.** Under "Mark a task complete", choose *Mochi: Morning walk* and click **Mark complete**. A success message reads *"Completed Morning walk. Next one is due …"* with tomorrow's date, and the table now shows the finished walk and a new one to do.
+
+### Key Scheduler behaviors shown
+
+- **Priority ordering:** high-priority tasks are placed first, and low-priority tasks are the first to be skipped when time runs out (*Brush coat* below).
+- **Gap filling:** flexible tasks fill the time around set-time tasks (*Refresh water* runs at 09:20, after the vet call).
+- **Sorting:** by duration in the task list and the CLI demo, and by clock time in the generated schedule.
+- **Filtering:** by pet and completion status, and combined with sorting.
+- **Conflict warnings:** for the same pet and for different pets, with the higher-priority task keeping the slot.
+- **Recurrence:** a daily task's next copy is due tomorrow, and a weekly task's next copy is due in 7 days.
+
+### Sample CLI output (`python main.py`)
+
+The terminal demo builds two pets with six tasks, shows sorting and filtering, adds three overlapping set-time tasks, generates the plan, and then completes a daily and a weekly task. The dates shown come from a run on 2026-10-19.
+
+```
+$ python main.py
+
+All tasks (insertion order)
+  - Morning walk (30 min, high priority, daily, incomplete)
+  - Brush coat (15 min, low priority, daily, incomplete)
+  - Breakfast (10 min, high priority, daily, incomplete)
+  - Play and enrichment (20 min, medium priority, daily, incomplete)
+  - Refresh water (5 min, medium priority, daily, incomplete)
+  - Clean litter box (10 min, medium priority, daily, completed)
+
+Sorted by time, shortest first
+  - Refresh water (5 min, medium priority, daily, incomplete)
+  - Breakfast (10 min, high priority, daily, incomplete)
+  - Clean litter box (10 min, medium priority, daily, completed)
+  - Brush coat (15 min, low priority, daily, incomplete)
+  - Play and enrichment (20 min, medium priority, daily, incomplete)
+  - Morning walk (30 min, high priority, daily, incomplete)
+
+Sorted by time, longest first
+  - Morning walk (30 min, high priority, daily, incomplete)
+  - Play and enrichment (20 min, medium priority, daily, incomplete)
+  - Brush coat (15 min, low priority, daily, incomplete)
+  - Breakfast (10 min, high priority, daily, incomplete)
+  - Clean litter box (10 min, medium priority, daily, completed)
+  - Refresh water (5 min, medium priority, daily, incomplete)
+
+Filtered: Mochi only
+  - Morning walk (30 min, high priority, daily, incomplete)
+  - Brush coat (15 min, low priority, daily, incomplete)
+  - Breakfast (10 min, high priority, daily, incomplete)
+
+Filtered: completed
+  - Clean litter box (10 min, medium priority, daily, completed)
+
+Filtered + sorted: Luna's incomplete tasks, shortest first
+  - Refresh water (5 min, medium priority, daily, incomplete)
+  - Play and enrichment (20 min, medium priority, daily, incomplete)
+
+Conflict check
+  WARNING: Mochi's 'Give medication' (09:00-09:05) overlaps Mochi's 'Trim nails' (09:00-09:10) [same pet]
+  WARNING: Mochi's 'Trim nails' (09:00-09:10) overlaps Luna's 'Vet video call' (09:05-09:20) [different pets]
+
+Today's Schedule
+Daily PawPal+ plan:
+- 08:00-08:30 - Mochi: Morning walk (30 min; scheduled first because it is high priority)
+- 08:30-08:40 - Mochi: Breakfast (10 min; scheduled first because it is high priority)
+- 08:40-09:00 - Luna: Play and enrichment (20 min; scheduled because it fits the remaining time (medium priority))
+- 09:00-09:05 - Mochi: Give medication (5 min; set for 09:00 (high priority))
+- 09:05-09:20 - Luna: Vet video call (15 min; set for 09:05 (medium priority))
+- 09:20-09:25 - Luna: Refresh water (5 min; scheduled because it fits the remaining time (medium priority))
+Scheduled 85 of 90 available minutes (5 minutes remaining).
+Not scheduled:
+- Mochi: Trim nails (conflicts with Give medication)
+- Mochi: Brush coat (needs 15 min, only 5 min left)
+Conflicts:
+- Mochi's 'Give medication' (09:00-09:05) overlaps Mochi's 'Trim nails' (09:00-09:10) [same pet]
+- Mochi's 'Trim nails' (09:00-09:10) overlaps Luna's 'Vet video call' (09:05-09:20) [different pets]
+
+Recurring tasks
+  Completed 'Morning walk' (daily).
+  Next occurrence created, due 2026-10-20.
+  Completed 'Bath' (weekly).
+  Next occurrence created, due 2026-10-26.
+
+Mochi's tasks now
+  - Morning walk (30 min, high priority, daily, completed)
+  - Brush coat (15 min, low priority, daily, incomplete)
+  - Breakfast (10 min, high priority, daily, incomplete)
+  - Give medication (5 min, high priority, daily, incomplete)
+  - Trim nails (10 min, medium priority, daily, incomplete)
+  - Morning walk (30 min, high priority, daily, incomplete)
+  - Bath (25 min, medium priority, weekly, completed)
+  - Bath (25 min, medium priority, weekly, incomplete)
+```
