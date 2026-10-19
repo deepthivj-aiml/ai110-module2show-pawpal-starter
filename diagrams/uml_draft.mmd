@@ -1,0 +1,73 @@
+classDiagram
+    class Task {
+        +String description
+        +int durationMinutes
+        +String frequency
+        +bool completed
+        +String priority
+        +String category
+        +isRecurring() bool
+        +isEssential() bool
+        +markCompleted()
+        +markIncomplete()
+        +describe() String
+    }
+
+    class Owner {
+        +String name
+        +String[] preferences
+        +int availableMinutes
+        +Pet[] pets
+        +updatePreferences(preferences)
+        +setAvailableTime(minutes)
+        +addPet(pet)
+        +removePet(pet)
+        +listPets()
+        +getAllTasks() Task[]
+    }
+
+    class Pet {
+        +String name
+        +String species
+        +int age
+        +String careNotes
+        +addTask(task)
+        +removeTask(task)
+        +listTasks()
+    }
+
+    class Scheduler {
+        +Time startTime
+        +createPlan(owner) DailyPlan
+        +explainChoice(task) String
+    }
+
+    class DailyPlan {
+        +int availableMinutes
+        +ScheduleEntry[] entries
+        +totalScheduledMinutes() int
+        +unusedMinutes() int
+        +addEntry(entry)
+        +remainingTime() int
+        +summarize() String
+    }
+
+    class ScheduleEntry {
+        +Pet pet
+        +Task task
+        +Time startTime
+        +Time endTime
+        +String reason
+        +duration() int
+        +formatForDisplay() String
+    }
+
+    Owner "1" --> "0..*" Pet : cares for
+    Pet "1" o-- "0..*" Task : has care tasks
+    Scheduler ..> Owner : reads preferences and time budget
+    Scheduler ..> Pet : schedules all pets
+    Scheduler ..> Task : retrieves through Owner
+    Scheduler ..> DailyPlan : creates
+    DailyPlan "1" *-- "0..*" ScheduleEntry : contains
+    ScheduleEntry --> Pet : belongs to
+    ScheduleEntry --> Task : schedules
