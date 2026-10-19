@@ -658,8 +658,36 @@ class Scheduler:
         )
 
     @staticmethod
+    def find_conflict_pairs(
+        owner: Owner, plan_date: date | None = None
+    ) -> list[tuple[TimedTask, TimedTask]]:
+        """Return each overlapping pair of set-time tasks as structured data.
+
+        Same check as :meth:`detect_conflicts`, but the caller gets the two
+        ``TimedTask`` spans instead of a message, so a UI can word its own
+        warning or suggest a new time.
+
+        Args:
+            owner: The owner whose pets' tasks are checked.
+            plan_date: The day being checked. Defaults to today.
+
+        Returns:
+            ``(earlier, later)`` pairs in start-time order.
+        """
+        return Scheduler._conflicting_pairs(
+            Scheduler._due_tasks(owner, plan_date or date.today())
+        )
+
+    @staticmethod
     def _find_conflicts(pairs: list[tuple[Pet, Task]]) -> list[str]:
-        """Compare every pair of set-time tasks and describe each overlap.
+        """Describe each overlapping pair of set-time tasks in one line."""
+        return [_conflict_message(a, b) for a, b in Scheduler._conflicting_pairs(pairs)]
+
+    @staticmethod
+    def _conflicting_pairs(
+        pairs: list[tuple[Pet, Task]],
+    ) -> list[tuple[TimedTask, TimedTask]]:
+        """Compare every pair of set-time tasks and return the overlapping ones.
 
         The set-time tasks are sorted by start so warnings come out in clock
         order. Then ``itertools.combinations`` checks each unordered pair once
@@ -672,7 +700,7 @@ class Scheduler:
                 ``fixed_time`` are ignored.
 
         Returns:
-            One warning per overlapping pair.
+            One ``(earlier, later)`` pair per overlap.
         """
         timed = sorted(
             (
@@ -683,7 +711,7 @@ class Scheduler:
             key=lambda item: item.start,
         )
         return [
-            _conflict_message(a, b)
+            (a, b)
             for a, b in combinations(timed, 2)
             if _overlaps(a.start, a.end, b.start, b.end)
         ]

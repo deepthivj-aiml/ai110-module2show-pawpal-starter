@@ -426,3 +426,19 @@ def test_sorted_entries_are_chronological_even_when_stored_out_of_order() -> Non
     assert [e.task for e in plan.entries] == [dinner, walk]  # insertion order
     starts = [e.start_time for e in plan.sorted_entries()]
     assert starts == sorted(starts) == [time(8, 0), time(18, 0)]
+
+
+def test_find_conflict_pairs_returns_structured_overlaps() -> None:
+    dog = Pet(name="Mochi", species="dog")
+    cat = Pet(name="Luna", species="cat")
+    walk = Task("Walk", 20, fixed_time=time(9, 0))
+    feed = Task("Feed", 10, fixed_time=time(9, 0))
+    dog.add_task(walk)
+    cat.add_task(feed)
+    owner = make_owner(60, dog, cat)
+
+    [(a, b)] = Scheduler.find_conflict_pairs(owner, TODAY)
+
+    assert (a.task, b.task) == (walk, feed) and a.pet is dog
+    assert (a.start, a.end) == (540, 560)
+    assert len(Scheduler.detect_conflicts(owner, TODAY)) == 1

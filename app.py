@@ -10,10 +10,12 @@ from pawpal_system import (
     MINUTES_PER_DAY,
     PRIORITIES,
     SPECIES,
+    DailyPlan,
     Owner,
     Pet,
     Scheduler,
     Task,
+    TimedTask,
 )
 
 DEFAULT_OWNER_NAME = "Jordan"
@@ -23,6 +25,51 @@ MAX_TASK_MINUTES = 240
 TIME_STEP_MINUTES = 15
 ALL_OPTION = "All"
 STATUS_FILTERS = {ALL_OPTION: None, "Incomplete": False, "Complete": True}
+# Maps each sort choice to the ``reverse`` flag of Scheduler.sort_by_time.
+SORT_OPTIONS = {"Order added": None, "Shortest first": False, "Longest first": True}
+PRIORITY_LABELS = {"high": "🔴 High", "medium": "🟡 Medium", "low": "🟢 Low"}
+
+
+def _clock(minutes: int) -> str:
+    """Format minutes after midnight as HH:MM."""
+    return f"{minutes // 60 % 24:02d}:{minutes % 60:02d}"
+
+
+def _label(item: TimedTask) -> str:
+    """Name a set-time task with its pet and time span."""
+    return (
+        f"**{item.pet.name}'s {item.task.description}** "
+        f"({_clock(item.start)}–{_clock(item.end)})"
+    )
+
+
+def show_conflict(a: TimedTask, b: TimedTask, plan: DailyPlan) -> None:
+    """Explain one clash in plain language, which task won and how to fix it."""
+    if a.pet is b.pet:
+        title = f"{a.pet.name} is booked for two things at once"
+    else:
+        title = "You can't be with two pets at once"
+    body = f"{_label(a)} overlaps {_label(b)}."
+
+    scheduled = {id(entry.task): entry for entry in plan.entries}
+    kept = next((x for x in (a, b) if id(x.task) in scheduled), None)
+    if kept is None:
+        body += "\n\nNeither task made it into today's plan."
+    else:
+        dropped = b if kept is a else a
+        why = (
+            f"it's {kept.task.priority} priority"
+            if kept.task.priority != dropped.task.priority
+            else "it was added first and both have the same priority"
+        )
+        free_at = f"{scheduled[id(kept.task)].end_time:%H:%M}"
+        body += (
+            f"\n\nPawPal+ kept **{kept.task.description}** because {why}, "
+            f"and left out **{dropped.task.description}**."
+            f"\n\n💡 To fit both, move {dropped.task.description} "
+            f"to {free_at} or later."
+        )
+    st.warning(body, icon="⚠️", title=title)
 
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
 
@@ -126,33 +173,54 @@ if pets:
     st.subheader("Current tasks")
     if "flash" in st.session_state:
         st.success(st.session_state.pop("flash"))
-    filter_pet_col, filter_status_col = st.columns(2)
+    filter_pet_col, filter_status_col, sort_col = st.columns(3)
     pet_filter = filter_pet_col.selectbox(
         "Show pet", [ALL_OPTION] + [pet.name for pet in pets]
     )
     status_filter = filter_status_col.selectbox("Show status", list(STATUS_FILTERS))
-    filtered = owner.filter_tasks(
+    sort_choice = sort_col.selectbox("Sort by duration", list(SORT_OPTIONS))
+
+    filtered = Scheduler.filter_tasks(
+        owner,
         pet_name=None if pet_filter == ALL_OPTION else pet_filter,
         completed=STATUS_FILTERS[status_filter],
     )
+    if SORT_OPTIONS[sort_choice] is not None:
+        filtered = Scheduler.sort_by_time(filtered, reverse=SORT_OPTIONS[sort_choice])
+    # Scheduler.filter_tasks returns bare tasks, so look each one's pet back up.
+    pet_of = {id(task): pet for pet, task in owner.get_pet_tasks()}
+
     if filtered:
         st.table(
             [
                 {
-                    "Pet": pet.name,
+                    "Pet": pet_of[id(task)].name,
                     "Task": task.description,
-                    "Duration (min)": task.duration_minutes,
-                    "Priority": task.priority,
-                    "Frequency": task.frequency,
-                    "Set time": f"{task.fixed_time:%H:%M}" if task.fixed_time else "",
-                    "Due": str(task.due_date or today),
-                    "Status": "Complete" if task.completed else "Incomplete",
+                    "Duration": f"{task.duration_minutes} min",
+                    "Priority": PRIORITY_LABELS[task.priority],
+                    "Repeats": task.frequency,
+                    "Set time": f"{task.fixed_time:%H:%M}" if task.fixed_time else "—",
+                    "Due": f"{task.due_date or today:%b %d}",
+                    "Status": "✅ Done" if task.completed else "⏳ To do",
                 }
-                for pet, task in filtered
-            ]
+                for task in filtered
+            ],
+            hide_index=True,
         )
+        st.caption(f"Showing {len(filtered)} of {len(pet_of)} tasks.")
     else:
-        st.caption("No tasks match these filters.")
+        st.info("No tasks match these filters.")
+
+    # Give a short heads-up as soon as a clash exists; the schedule below
+    # explains which task wins and how to fix it.
+    clashes = Scheduler.find_conflict_pairs(owner, today)
+    if clashes:
+        st.warning(
+            "\n".join(f"- {_label(a)} overlaps {_label(b)}" for a, b in clashes)
+            + "\n\nGenerate today's schedule to see which task PawPal+ keeps.",
+            icon="⚠️",
+            title=f"{len(clashes)} set-time conflict{'s' if len(clashes) > 1 else ''}",
+        )
 
     open_tasks = owner.filter_tasks(completed=False)
     if open_tasks:
@@ -178,28 +246,51 @@ if pets:
     st.subheader("Today's schedule")
     if st.button("Generate schedule"):
         plan = Scheduler(start_time=day_start).create_plan(owner, plan_date=today)
-        for conflict in plan.conflicts:
-            st.warning(f"Conflict: {conflict}")
+
+        tasks_col, used_col, free_col = st.columns(3)
+        tasks_col.metric("Tasks scheduled", len(plan.entries))
+        used_col.metric("Minutes used", plan.total_scheduled_minutes)
+        free_col.metric("Minutes free", plan.remaining_time())
+
+        if plan.entries and not plan.skipped:
+            st.success(
+                f"Everything fits! {len(plan.entries)} "
+                f"{'task is' if len(plan.entries) == 1 else 'tasks are'} planned with "
+                f"{plan.remaining_time()} minutes to spare.",
+                icon="✅",
+            )
+
+        for earlier, later in Scheduler.find_conflict_pairs(owner, today):
+            show_conflict(earlier, later, plan)
+
         if plan.entries:
             st.table(
                 [
                     {
-                        "Time": f"{e.start_time:%H:%M}-{e.end_time:%H:%M}",
+                        "Time": f"{e.start_time:%H:%M}–{e.end_time:%H:%M}",
                         "Pet": e.pet.name,
                         "Task": e.task.description,
+                        "Priority": PRIORITY_LABELS[e.task.priority],
                         "Why": e.reason,
                     }
                     for e in plan.sorted_entries()
-                ]
-            )
-            st.caption(
-                f"Scheduled {plan.total_scheduled_minutes} of "
-                f"{plan.available_minutes} minutes "
-                f"({plan.unused_minutes} remaining)."
+                ],
+                hide_index=True,
             )
         else:
             st.info("No incomplete tasks fit into today's available time.")
+
         if plan.skipped:
-            st.markdown("**Not scheduled**")
-            for skipped in plan.skipped:
-                st.markdown(f"- {skipped.format_for_display()}")
+            st.markdown(f"**Not scheduled ({len(plan.skipped)})**")
+            st.table(
+                [
+                    {
+                        "Pet": s.pet.name,
+                        "Task": s.task.description,
+                        "Priority": PRIORITY_LABELS[s.task.priority],
+                        "Reason": s.reason,
+                    }
+                    for s in plan.skipped
+                ],
+                hide_index=True,
+            )
